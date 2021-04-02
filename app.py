@@ -12,6 +12,9 @@ from flask_jwt_extended import jwt_required
 from flask_jwt_extended import JWTManager
 from datetime import timedelta
 
+from transfer import transfer_process
+from db import db
+
 app = Flask(__name__)
 
 app.config["JWT_SECRET_KEY"] = "secret"
@@ -20,8 +23,7 @@ app.config["JWT_REFRESH_TOKEN_EXPIRES"] = timedelta(days=30)
 jwt = JWTManager(app)
 
 
-client = pymongo.MongoClient('mongodb+srv://brian:jGKGtNwW9DjN6Jw@cluster0.qep55.mongodb.net/')
-db = client.spin
+# client = pymongo.MongoClient('mongodb+srv://brian:mongoPass123@cluster0.qep55.mongodb.net/')
 
 @app.route('/register', methods=['POST'])
 def register():
@@ -68,7 +70,6 @@ def login():
 
         db.token.update(key, row, upsert=True)
         
-        result['user_id'] = user_id
         response['status'] = 'SUCCESS'
         response['result'] = result
         return response
@@ -202,50 +203,24 @@ def transfer():
         response['message'] = 'balance not enough'
         return response
     else:
-        balance_after = current_balance['balance'] - data['amount']
-        old_data = {'user_id': user_id}
-        new_data = {'$set': {'balance': balance_after, 'updated_at': datetime.datetime.now()}}
-
-        if destination_balance is None:
-            dest = {}
-            dest['user_id'] = data['target_user']
-            dest['balance'] = 0
-            dest['created_at'] = datetime.datetime.now()
-
-            dest_balance = dest['balance']
-
-            db.user_balance.insert(dest)
-        else:
-            dest_balance = destination_balance['balance']
-
-        try:
-            db.user_balance.update_one(old_data, new_data)
-            
-            key = {'user_id': data['target_user']}
-            row = {'user_id': data['target_user'], 'balance': dest_balance+data['amount'], 'updated_at': datetime.datetime.now()}
-
-            db.user_balance.update(key, row, upsert=True)
-            data_transfer['status'] = 'SUCCESS'
-        except:
-            data_transfer['status'] = 'FAILED'
-
-        result['balance_before'] = current_balance['balance']  
-    
+        balance_after, status = transfer_process(user_id, data, current_balance, destination_balance)
 
     data_transfer['transfer_id'] = str(uuid.uuid4())
     data_transfer['user_id'] = get_jwt_identity()
     data_transfer['transaction_type'] = 'DEBIT'
     data_transfer['amount'] = data['amount']
     data_transfer['remarks'] = data['remarks']
-    data_transfer['balance_before'] = result['balance_before']
+    data_transfer['balance_before'] = current_balance['balance']
     data_transfer['balance_after'] = balance_after
     data_transfer['created_date'] = datetime.datetime.now()
+    data_transfer['status'] = status
     
     db.transaction.insert(data_transfer)
 
     result['transfer_id'] = data_transfer['transfer_id']
     result['amount'] = data['amount']
     result['remarks'] = data['remarks']
+    result['balance_before'] = current_balance['balance']
     result['balance_after'] = balance_after
     result['created_date'] = data_transfer['created_date']
 
